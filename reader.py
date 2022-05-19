@@ -8,9 +8,9 @@ import numpy as np
 from mediapipe.python.solutions.face_mesh import FaceMesh
 from mediapipe.python.solutions.hands import Hands
 
-from ppg08.data import Data
-from ppg08.requeue import ReQueue, ReQueueIterator
-import ppg08.algorithms as algorithms
+from data import Data
+from requeue import ReQueue, ReQueueIterator
+import algorithms as algorithms
 
 start = 50
 
@@ -49,11 +49,13 @@ def show_images_contour(queue: ReQueue | ReQueueIterator, values: list[Data], wi
                     continue
                 x, y = int(x), int(y)
                 image[y, x] = 255
-        if values[index].hand is None:
-            time.sleep(0.1)
-        if values[index].hand is not None:
+        if values[index].hand_contour is None:
+            print('.')
+            time.sleep(0.2)
+        if values[index].hand_contour is not None:
+            print(values[index].hand_contour)
             image = image.copy()
-            for x, y, z in values[index].hand:
+            for x, y, z in values[index].hand_contour:
                 if x >= image.shape[1] or y >= image.shape[0]:
                     continue
                 x, y = int(x), int(y)
@@ -70,7 +72,7 @@ def show_images_contour(queue: ReQueue | ReQueueIterator, values: list[Data], wi
 def get_contours(queue: ReQueue | ReQueueIterator, values: list[Data],
                  face_mesh_detector: FaceMesh, algorithm=algorithms.algorithm_1):
     with face_mesh_detector:
-        for index, (image, timestamp) in queue(ReQueue.LAST):
+        for index, (image, timestamp) in queue(ReQueue.NEXT):
             results = face_mesh_detector.process(image).multi_face_landmarks
             if results is None:
                 continue
@@ -92,7 +94,7 @@ def get_contours(queue: ReQueue | ReQueueIterator, values: list[Data],
 def get_hand(queue: ReQueue | ReQueueIterator, values: list[Data],
              hand_mesh_detector: Hands, algorithm=algorithms.algorithm_1):
     with hand_mesh_detector:
-        for index, (image, timestamp) in queue(ReQueue.LAST):
+        for index, (image, timestamp) in queue(ReQueue.NEXT):
             results = hand_mesh_detector.process(image).multi_hand_landmarks
             if results is None:
                 continue
@@ -100,12 +102,17 @@ def get_hand(queue: ReQueue | ReQueueIterator, values: list[Data],
             landmarks[:, 0] *= image.shape[1]
             landmarks[:, 1] *= image.shape[0]
 
-            values[index].hand = landmarks
+            values[index].hand_mesh = landmarks
 
-# def compute_ppg(queue: ReQueue | ReQueueIterator, values: list[Data], rectangle=None):
-#     r = rectangle or (0, 0, -1, -1)
-#     for index, (image, timestamp) in queue(ReQueue.NEXT):
-#         values.append(Data(np.mean(image[r[1]:r[3], r[0]:r[2]], axis=(0, 1)), timestamp, []))
+
+def get_hand_contour(queue: ReQueue | ReQueueIterator, values: list[Data]):
+    PoI = [0, 1, 5, 9, 13, 17]
+    for index, (image, timestamp) in queue(ReQueue.NEXT):
+        if values[index].hand_mesh is None:
+            time.sleep(0.02)
+        if values[index].hand_mesh is None:
+            continue
+        values[index].hand_contour = values[index].hand_mesh[PoI]
 
 
 def show_plots(queue: ReQueue | ReQueueIterator, values: list[Data], window_name="Webcam"):
@@ -140,21 +147,29 @@ def show_plots(queue: ReQueue | ReQueueIterator, values: list[Data], window_name
     plt.close()
 
 
-def main(video_input: int | str = 0, plots: bool = True):
+def main(video_input: int | str = 0, plots: bool = False, face=True, hand=False):
     queue = ReQueue()
     values = []
     video_input = int(video_input) if isinstance(video_input, str) and video_input.isdigit() else video_input
     t0 = threading.Thread(target=add_images, args=(queue, values, video_input))
-    t1 = threading.Thread(target=show_images_contour, args=(queue, values))
-    t2 = threading.Thread(target=get_contours, args=(queue, values, FaceMesh()))
-    t3 = threading.Thread(target=get_hand, args=(queue, values, Hands()))
     t0.start()
-    t1.start()
-    t2.start()
-    t3.start()
+
+    if face:
+        t2 = threading.Thread(target=get_contours, args=(queue, values, FaceMesh()))
+        t2.start()
+
+    if hand:
+        t3 = threading.Thread(target=get_hand, args=(queue, values, Hands()))
+        t4 = threading.Thread(target=get_hand_contour, args=(queue, values))
+        t3.start()
+        t4.start()
+
     if plots:
         t3 = threading.Thread(target=show_plots, args=(queue, values))
         t3.start()
+
+    t1 = threading.Thread(target=show_images_contour, args=(queue, values))
+    t1.start()
     return queue, values
 
 

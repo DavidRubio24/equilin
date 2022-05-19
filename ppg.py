@@ -3,8 +3,8 @@ from time import time
 import cv2
 import numpy as np
 
-import ppg08.utils as utils
-import ppg03.algorithms as algorithms
+import utils as utils
+import algorithms as algorithms
 
 
 class PPG:

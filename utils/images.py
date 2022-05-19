@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 
+
 class Click:
     def __init__(self):
         self.points = [(-1, -1), (0, 0)]
@@ -26,3 +27,18 @@ def open_image(file) -> np.ndarray:
         return file
     else:
         raise ValueError('Unknown file type, neither a path nor a numpy array.')
+
+
+def show(img, resize=None, destroy=True, name='0', delay=0):
+    if isinstance(img, str): img = cv2.imread(img)
+    elif isinstance(img, cv2.VideoCapture): img = img.read()[1]
+    if resize is not None:
+        if isinstance(resize, tuple):
+            img = cv2.resize(img, resize)
+        else:
+            img = cv2.resize(img, (round(resize * img.shape[1]), round(resize * img.shape[0])))
+    cv2.imshow(str(name), img)
+    k = cv2.waitKey(delay)
+    if destroy:
+        cv2.destroyWindow(str(name))
+    return k
