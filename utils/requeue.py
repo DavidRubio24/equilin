@@ -1,6 +1,6 @@
 import time
 
-from lockobject import LockObject
+from .lockobject import LockObject
 
 
 class ReQueue:
@@ -29,8 +29,8 @@ class ReQueue:
 class ReQueueIterator:
     def __init__(self, requeue, mode=ReQueue.NEXT):
         with LockObject(requeue):
-            self.next_item: int = requeue.next_item
-            requeue.observers.add(self)
+            self.next_item: int = requeue.next_item  # TODO: If mode is LAST, next_item should be infinity.
+            requeue.followers.add(self)
         self.requeue: ReQueue = requeue
         self.mode = mode
 
@@ -60,8 +60,9 @@ class ReQueueIterator:
         # Depending on the mode, we return either the next item, the last item or all items.
         item = None
         next_item = self.next_item
+        self.index = self.next_item
         if self.mode == ReQueue.NEXT:
-            item = self.requeue.items[self.next_item - self.requeue.next_item]
+            item = self.requeue.items[self.index - self.requeue.next_item]
             next_item = self.next_item + 1
         elif self.mode == ReQueue.LAST:
             item = self.requeue.items[-1]
@@ -85,3 +86,10 @@ class ReQueueIterator:
     def __del__(self):
         with LockObject(self.requeue):
             self.requeue.observers.discard(self)
+
+
+class ReQueueIteratorEnumerated(ReQueueIterator):
+
+    def __next__(self):
+        item = super().__next__()
+        return item
