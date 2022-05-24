@@ -42,3 +42,10 @@ def show(img, resize=None, destroy=True, name='0', delay=0):
     if destroy:
         cv2.destroyWindow(str(name))
     return k
+
+
+def isimage(image: np.ndarray) -> bool:
+    return (image is not None
+            and isinstance(image, np.ndarray)
+            and image.ndim == 3
+            and image.shape[-1] == 3)
