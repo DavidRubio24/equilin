@@ -26,14 +26,14 @@ class RequestQueue:
 
     def __call__(self, type_: type): return type_(self)
 
-    def add_follower(self, follower):
+    def add_follower(self, *followers):
         with LockObject(self):
-            self.followers.add(follower)
+            self.followers.update(followers)
 
     # TODO: get rid of this function.
-    def remove_follower(self, follower):
+    def remove_follower(self, *followers):
         with LockObject(self):
-            self.followers.discard(follower)
+            self.followers.difference_update(followers)
 
 
 class RequestQueueNext(RequestQueue):
