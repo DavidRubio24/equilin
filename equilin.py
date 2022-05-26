@@ -4,15 +4,15 @@ import threading
 from mediapipe.python.solutions.face_mesh import FaceMesh
 from mediapipe.python.solutions.hands import Hands
 
-from utils.queues import RequestQueue, join_queues, RequestQueueNext, RequestQueueLast
-from workers import add_images, detect_mesh, compute_roi, draw_images, get_ppg, save_array, show_images, roi_hand_points, \
-    roi_hand_combined, save_video
+from roi import hand_PoI, hand_comb, forehead_PoI, forehead_comb
+from utils.queues import RequestQueue, RequestQueueNext, RequestQueueLast, join_queues
+from workers import add_images, detect_mesh, compute_roi, draw_images, get_ppg, save_array, show_images, save_video
 
 MODE = {int: RequestQueueLast,
         str: RequestQueueNext}
 
 
-def ppg_face(video_input=0, output_file='ppg.npy'):
+def ppg_face(video_input=0, output_file='ppg.npy', duration=10):
     images_queue   = RequestQueue()
     facemesh_queue = RequestQueue()
     roi_face_queue = RequestQueue()
@@ -23,7 +23,7 @@ def ppg_face(video_input=0, output_file='ppg.npy'):
 
     # We'll create a thread calling the first item with the second item as arguments.
     threads = [
-        (add_images,  (video_input,          images_queue)),
+        (add_images,  (video_input,          images_queue, duration)),
         (detect_mesh, (images_queue(mode),   facemesh_queue, FaceMesh)),
         (compute_roi, (facemesh_queue(mode), roi_face_queue)),
         (draw_images, (roi_face_queue,       drawn_queue)),
@@ -37,12 +37,13 @@ def ppg_face(video_input=0, output_file='ppg.npy'):
     return images_queue
 
 
-def ppg_hand(video_input=0, output_face_file='ppg_face.npy', output_hand_file='ppg_hand.npy'):
+def ppg_hand(video_input=0, output_face_file='ppg_face.npy', output_hand_file='ppg_hand.npy', duration=30):
     images_queue   = RequestQueue()
     facemesh_queue = RequestQueue()
     handmesh_queue = RequestQueue()
     roi_face_queue = RequestQueue()
     roi_hand_queue = RequestQueue()
+    joined_queue   = RequestQueue()
     drawn_queue    = RequestQueue()
     ppg_face_queue = RequestQueue()
     ppg_hand_queue = RequestQueue()
@@ -51,15 +52,16 @@ def ppg_hand(video_input=0, output_face_file='ppg_face.npy', output_hand_file='p
 
     # We'll create a thread calling the first item with the second item as arguments and the third as keyword arguments.
     threads = [
-        (add_images,  (video_input,    images_queue)),
+        (add_images,  (video_input,    images_queue, duration)),
 
         (detect_mesh, (images_queue(mode),   facemesh_queue, FaceMesh)),
         (detect_mesh, (images_queue(mode),   handmesh_queue, Hands)),
 
-        (compute_roi, (facemesh_queue(mode), roi_face_queue)),
-        (compute_roi, (handmesh_queue(mode), roi_hand_queue, roi_hand_points, roi_hand_combined)),
+        (compute_roi, (facemesh_queue(mode), roi_face_queue, forehead_PoI, forehead_comb)),
+        (compute_roi, (handmesh_queue(mode), roi_hand_queue,     hand_PoI,     hand_comb)),
 
-        (draw_images, (facemesh_queue, drawn_queue)),
+        (join_queues, (joined_queue, roi_face_queue, roi_hand_queue)),
+        (draw_images, (joined_queue, drawn_queue)),
         (show_images, (drawn_queue,    'Face')),
 
         (get_ppg,     (roi_face_queue(mode), ppg_face_queue)),
@@ -73,11 +75,11 @@ def ppg_hand(video_input=0, output_face_file='ppg_face.npy', output_hand_file='p
     return images_queue
 
 
-def record(video_input=0, output_file='video.mp4'):
+def record(video_input=0, output_file='video.mp4', duration=10):
     images_queue = RequestQueue()
 
     threas = [
-        (add_images,  (video_input,    images_queue)),
+        (add_images,  (video_input,    images_queue, duration)),
         (save_video,  (images_queue,   output_file)),
         (show_images, (images_queue,   'Video')),
     ]
@@ -87,7 +89,10 @@ def record(video_input=0, output_file='video.mp4'):
     return images_queue
 
 
-def main(video_input=0, output_files=(), type_='hand'):
+def main(video_input=0, *output_files, type_='hand'):
+    if isinstance(video_input, str) and video_input.isdigit():
+        video_input = int(video_input)
+
     if type_ == 'face':
         return ppg_face(video_input, *output_files[:1])
     elif type_ == 'hand':

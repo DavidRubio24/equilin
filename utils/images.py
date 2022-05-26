@@ -49,3 +49,10 @@ def isimage(image: np.ndarray) -> bool:
             and isinstance(image, np.ndarray)
             and image.ndim == 3
             and image.shape[-1] == 3)
+
+
+def islandmarks(landmarks: np.ndarray) -> bool:
+    return (landmarks is not None
+            and isinstance(landmarks, np.ndarray)
+            and landmarks.dtype in [np.float32, np.float64, float]
+            and landmarks.shape[-1] == 3)
