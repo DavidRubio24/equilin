@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from mediapipe.python.solutions.face_mesh import FaceMesh
 from mediapipe.python.solutions.hands import Hands
 

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import sys
 import time
@@ -68,6 +70,7 @@ def detect_mesh(images_queue: RequestQueue, mesh_queue: RequestQueue | list[Requ
             if image is None:
                 log.debug(f'Image {timestamp} is None.')
                 continue
+            start = time.time()
             results = get_results_from_detector(mesh_detector, image)
             if results[0] is None:
                 log.debug(f'No detected mesh in {timestamp}.')
@@ -90,6 +93,8 @@ def detect_mesh(images_queue: RequestQueue, mesh_queue: RequestQueue | list[Requ
                 mesh_queue[0].append((timestamp, image, landmarks[first], *rest))
                 if len(landmarks) > 1:
                     mesh_queue[0].append((timestamp, image, landmarks[second], *rest))
+            end = time.time()
+            print(f'FPS: {1 / (end - start)}  {detector_type.__name__}')
     if isinstance(mesh_queue, RequestQueue):
         mesh_queue.off()
     else:

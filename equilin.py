@@ -75,6 +75,85 @@ def ppg_hand(video_input=0, output_face_file='ppg_face.npy', output_hand_file='p
     return images_queue
 
 
+def ppg_hand_test(video_input=0, output_face_file='ppg_face.npy', output_hand_file='ppg_hand.npy', duration=30):
+    images_queue   = RequestQueue()
+    handmesh_queue = RequestQueue()
+    roi_hand_queue = RequestQueue()
+    ppg_hand_queue = RequestQueue()
+
+    mode = MODE[type(video_input)]
+
+    # We'll create a thread calling the first item with the second item as arguments and the third as keyword arguments.
+    threads = [
+        (add_images,  (video_input,    images_queue, duration)),
+
+        (detect_mesh, (images_queue(mode),   handmesh_queue, Hands)),
+
+        (compute_roi, (handmesh_queue(mode), roi_hand_queue,     hand_PoI,     hand_comb)),
+
+        (get_ppg,     (roi_hand_queue(mode), ppg_hand_queue)),
+    ]
+
+    for thread in threads:
+        threading.Thread(target=thread[0], args=thread[1], kwargs=thread[2] if len(thread) > 2 else {}).start()
+    return images_queue
+
+
+def ppg_face_test(video_input=0, output_file='ppg_face.npy', duration=30):
+    images_queue   = RequestQueue()
+    facemesh_queue = RequestQueue()
+    roi_face_queue = RequestQueue()
+    ppg_face_queue = RequestQueue()
+
+    mode = MODE[type(video_input)]
+
+    # We'll create a thread calling the first item with the second item as arguments and the third as keyword arguments.
+    threads = [
+        (add_images,  (video_input,    images_queue, duration)),
+
+        (detect_mesh, (images_queue(mode),   facemesh_queue)),
+
+        (compute_roi, (facemesh_queue(mode), roi_face_queue, forehead_PoI, forehead_comb)),
+
+        (get_ppg,     (roi_face_queue(mode), ppg_face_queue)),
+    ]
+
+    for thread in threads:
+        threading.Thread(target=thread[0], args=thread[1], kwargs=thread[2] if len(thread) > 2 else {}).start()
+    return images_queue
+
+
+def ppg_face_n_hand_test(video_input=0, output_face_file='ppg_face.npy', output_hand_file='ppg_hand.npy', duration=30):
+    images_queue   = RequestQueue()
+    facemesh_queue = RequestQueue()
+    handmesh_queue = RequestQueue()
+    roi_face_queue = RequestQueue()
+    roi_hand_queue = RequestQueue()
+    ppg_face_queue = RequestQueue()
+    ppg_hand_queue = RequestQueue()
+
+    mode = MODE[type(video_input)]
+
+    # We'll create a thread calling the first item with the second item as arguments and the third as keyword arguments.
+    threads = [
+        (add_images,  (video_input,    images_queue, duration)),
+
+        (detect_mesh, (images_queue(mode),   facemesh_queue, FaceMesh)),
+        (detect_mesh, (images_queue(mode),   handmesh_queue, Hands)),
+
+        (compute_roi, (facemesh_queue(mode), roi_face_queue, forehead_PoI, forehead_comb)),
+        (compute_roi, (handmesh_queue(mode), roi_hand_queue,     hand_PoI,     hand_comb)),
+
+
+        (get_ppg,     (roi_face_queue(mode), ppg_face_queue)),
+        (get_ppg,     (roi_hand_queue(mode), ppg_hand_queue)),
+    ]
+
+    for thread in threads:
+        threading.Thread(target=thread[0], args=thread[1], kwargs=thread[2] if len(thread) > 2 else {}).start()
+    return images_queue
+
+
 def record(video_input=0, output_file='video.mp4', duration=10):
     images_queue = RequestQueue()
 
@@ -97,6 +176,8 @@ def main(video_input=0, *output_files, type_='hand'):
         return ppg_face(video_input, *output_files[:1])
     elif type_ == 'hand':
         return ppg_hand(video_input, *output_files[:2])
+    elif type_ == 'hand_test':
+        return ppg_hand_test(video_input, *output_files[:2])
     elif type_ == 'record':
         return record(video_input, *output_files[:1])
 
