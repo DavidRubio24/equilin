@@ -276,6 +276,7 @@ def face_n_hand_realtime(video_input=0, output_face_file='ppg_face.npy', output_
     interpolated_face_queue = RequestQueue()
     roi_hand_queue = RequestQueue()
     roi_face_queue = RequestQueue()
+    joined_queue   = RequestQueue()
     ppg_hand_queue = RequestQueue()
     ppg_face_queue = RequestQueue()
 
@@ -301,7 +302,8 @@ def face_n_hand_realtime(video_input=0, output_face_file='ppg_face.npy', output_
 
     if show:
         drawn_queue = RequestQueue()
-        threads.append((draw_images, (interpolated_hand_queue(RequestQueueLast), drawn_queue)))
+        threads.append((join_queues, (joined_queue, roi_face_queue(RequestQueueLast), roi_hand_queue(RequestQueueLast))))
+        threads.append((draw_images, (joined_queue(RequestQueueLast), drawn_queue)))
         threads.append((show_images, (drawn_queue(RequestQueueLast),        'Face')))
 
     for thread in threads:

@@ -231,3 +231,18 @@ def interpolate(images_queue: RequestQueue, mesh_queue: RequestQueue, interpolat
     interpolated_queue.off()
 
     log.debug('End of interpolate.')
+
+
+def skin_detection(images_queue: RequestQueue, skin_queue: RequestQueue):
+    for timestamp, image, *rest in images_queue:
+        image = image.astype(int)
+        r = image[..., 0]
+        g = image[..., 1]
+        b = image[..., 2]
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        h = hsv[..., 0]
+        s = hsv[..., 1]
+        v = hsv[..., 2]
+
+        skin_queue.append((timestamp, skin, *rest))
+    skin_queue.off()
