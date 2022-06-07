@@ -7,10 +7,12 @@ import time
 import cv2
 import numpy as np
 
+from functions import Camera, draw, detect, roi, ppg
 from roi import forehead_PoI, forehead_comb
 from utils.queues import RequestQueue
 from utils.images import isimage, islandmarks
-from utils.utils import get_results_from_detector
+from utils.utils import get_image, get_landmarks
+from utils.images import get_results_from_detector
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.StreamHandler(sys.stderr))
@@ -19,25 +21,11 @@ log.setLevel(logging.DEBUG)
 
 
 def add_images(video_input, images_queue: RequestQueue, duration=None):
-    """Add images to the queue from the video_input."""
-    cap = cv2.VideoCapture(video_input)
-    frame_count = 0
-    success, image = cap.read()
-    timestamp = time.time()
-    time_duration = duration if isinstance(duration, float) else float('inf')
-    frames_duration = duration if isinstance(duration, int) else float('inf')
-    until = timestamp + time_duration
-    while (success
-           and images_queue.more
-           and frame_count < frames_duration
-           and timestamp < until):
-        images_queue.append((time.time(), image[..., ::-1]))
-        success, image = cap.read()
-        timestamp = time.time()
-        frame_count += 1
+    for timestamp, image in Camera(video_input, duration):
+        if not images_queue.more: break
+        images_queue.append((timestamp, image))
     images_queue.off()
-    cap.release()
-    log.debug('End of add_images.')
+    log.debug('End of add_images_test.')
 
 
 def show_images(images_queue: RequestQueue, title='Images', delay=10):
@@ -55,11 +43,7 @@ def draw_images(images_queue: RequestQueue, drawn_queue: RequestQueue, copy=True
     for timestamp, *rest in images_queue:
         image = next(filter(isimage, rest), None)
         if image is None: continue
-        image = image.copy() if copy else image
-        for landmarks in filter(islandmarks, rest):
-            for x, y, z in landmarks.reshape(-1, 3):
-                x, y = round(x), round(y)
-                cv2.circle(image, (x, y), 1, (255, 255, 255), -1)
+        image = draw(image, filter(islandmarks, rest), copy=copy)
         drawn_queue.append((timestamp, image, *rest))
     drawn_queue.off()
     log.debug('End of draw_images.')
@@ -69,40 +53,14 @@ def detect_mesh(images_queue: RequestQueue, mesh_queue: RequestQueue | list[Requ
     """Detect a face in the images."""
     with detector as mesh_detector:
         for timestamp, image, *rest in images_queue:
-            if image is None:
-                log.debug(f'Image {timestamp} is None.')
-                continue
-            results = get_results_from_detector(mesh_detector, image)
-            if results[0] is None:
-                log.debug(f'No detected {mesh_detector.__class__.__name__} mesh in {timestamp}.')
-                continue
-
-            landmarks = np.array([[(l.x, l.y, l.z) for l in result.landmark] for result in results[0]])[0]  # TODO:
-            landmarks[..., 0] *= image.shape[1]
-            landmarks[..., 1] *= image.shape[0]
-
-            if isinstance(mesh_queue, RequestQueue):
-                mesh_queue.append((timestamp, image, landmarks, *rest))
-            else:
-                # TODO: check if it works.
-                first, second = 0, 1
-                if (len(results) > 1
-                        and len(landmarks) > 1
-                        and results[2] is not None
-                        and results[2][0].classification[0].label == 'Left'):
-                    first, second = 1, 0
-                mesh_queue[0].append((timestamp, image, landmarks[first], *rest))
-                if len(landmarks) > 1:
-                    mesh_queue[0].append((timestamp, image, landmarks[second], *rest))
-    if isinstance(mesh_queue, RequestQueue):
-        mesh_queue.off()
-    else:
-        for queue in mesh_queue:
-            queue.off()
+            landmarks = detect(mesh_detector, image, timestamp)
+            if landmarks is None: continue
+            mesh_queue.append((timestamp, image, landmarks, *rest))
+    mesh_queue.off()
     log.debug('End of detect_mesh.')
 
 
-def compute_roi(mesh_queue: RequestQueue, roi_queue: RequestQueue, roi_points=forehead_PoI, roi_comb=forehead_comb):
+def compute_roi_(mesh_queue: RequestQueue, roi_queue: RequestQueue, roi_points=forehead_PoI, roi_comb=forehead_comb):
     for timestamp, image, landmarks, *rest in mesh_queue:
         contour = landmarks.reshape(-1, 3)[list(roi_points)]
         contour = np.einsum('ij,ik->kj', contour, roi_comb)
@@ -111,7 +69,14 @@ def compute_roi(mesh_queue: RequestQueue, roi_queue: RequestQueue, roi_points=fo
     log.debug('End of compute_roi.')
 
 
-def get_ppg(roi_queue: RequestQueue, ppg_queue: RequestQueue):
+def compute_roi(mesh_queue: RequestQueue, roi_queue: RequestQueue, roi_points, roi_comb=None):
+    for timestamp, image, landmarks, *rest in mesh_queue:
+        roi_queue.append((timestamp, image, roi(landmarks, roi_points, roi_comb), *rest))
+    roi_queue.off()
+    log.debug('End of compute_roi.')
+
+
+def get_ppg_(roi_queue: RequestQueue, ppg_queue: RequestQueue):
     for timestamp, image, contour, *rest in roi_queue:
         # Get mask from contour.
         mask = np.zeros(image.shape[:2], dtype=np.uint8)
@@ -123,6 +88,22 @@ def get_ppg(roi_queue: RequestQueue, ppg_queue: RequestQueue):
     log.debug('End of get_ppg.')
 
 
+def get_ppg(roi_queue: RequestQueue, ppg_queue: RequestQueue):
+    for timestamp, image, contour, *rest in roi_queue:
+        ppg_queue.append((timestamp, ppg(image, contour), *rest))
+    ppg_queue.off()
+    log.debug('End of get_ppg.')
+
+
+def get_ppg_computing_rois(mesh_queue: RequestQueue, roi_queue: RequestQueue, roi_points, roi_comb=None, excludes=None):
+    roi_comb = roi_comb or np.eye(len(roi_points))
+    for timestamp, image, landmarks, *rest in mesh_queue:
+        contour = roi(landmarks, roi_points, roi_comb)
+        roi_queue.append((timestamp, ppg(image, contour, [roi(landmarks, exclude) for exclude in excludes]), *rest))
+    roi_queue.off()
+    log.debug('End of compute_roi.')
+
+
 def save_array(ppg_queue: RequestQueue, output_file='ppg.npy'):
     values = []
     for timestamp, ppg, *rest in ppg_queue:
@@ -131,7 +112,7 @@ def save_array(ppg_queue: RequestQueue, output_file='ppg.npy'):
     output_file_npy = output_file + '.npy' if not output_file.endswith('.npy') else output_file + '.npy'
     output_file_csv = output_file + '.csv' if not output_file.endswith('.csv') else output_file + '.csv'
     np.save(output_file_npy, values)
-    np.savetxt(output_file_csv, values, delimiter=',')
+    np.savetxt(output_file_csv, values, delimiter=',\t', fmt='%g')
 
     log.debug(f'End of save_ppg (saved in {output_file}).')
 
@@ -231,18 +212,3 @@ def interpolate(images_queue: RequestQueue, mesh_queue: RequestQueue, interpolat
     interpolated_queue.off()
 
     log.debug('End of interpolate.')
-
-
-def skin_detection(images_queue: RequestQueue, skin_queue: RequestQueue):
-    for timestamp, image, *rest in images_queue:
-        image = image.astype(int)
-        r = image[..., 0]
-        g = image[..., 1]
-        b = image[..., 2]
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        h = hsv[..., 0]
-        s = hsv[..., 1]
-        v = hsv[..., 2]
-
-        skin_queue.append((timestamp, skin, *rest))
-    skin_queue.off()

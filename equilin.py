@@ -4,10 +4,10 @@ import threading
 from mediapipe.python.solutions.face_mesh import FaceMesh
 from mediapipe.python.solutions.hands import Hands
 
-from roi import hand_PoI, hand_comb, forehead_PoI, forehead_comb
+from roi import hand_PoI, hand_comb, forehead_PoI, forehead_comb, face_RoI, left_eye_RoI, right_eye_RoI, mouth_RoI, left_eyebrow_RoI, right_eyebrow_RoI
 from utils.queues import RequestQueue, RequestQueueNext, RequestQueueLast, join_queues
 from workers import add_images, detect_mesh, compute_roi, draw_images, get_ppg, save_array, show_images, save_video, \
-    interpolate, save_debug
+    interpolate, get_ppg_computing_rois
 
 MODE = {int: RequestQueueLast,
         str: RequestQueueNext}
@@ -26,7 +26,7 @@ def ppg_face(video_input=0, output_file='ppg.npy', duration=10.):
     threads = [
         (add_images,  (video_input,          images_queue, duration)),
         (detect_mesh, (images_queue(mode),   facemesh_queue, FaceMesh)),
-        (compute_roi, (facemesh_queue(mode), roi_face_queue)),
+        (compute_roi, (facemesh_queue(mode), roi_face_queue, forehead_PoI, forehead_comb)),
         (draw_images, (roi_face_queue,       drawn_queue)),
         (show_images, (drawn_queue,   'Face')),
         (get_ppg,     (roi_face_queue(mode), ppg_queue)),
@@ -379,6 +379,40 @@ def face_n_hand_video(video_input=0, output_face_file='ppg_face.npy', output_han
         drawn_queue = RequestQueue()
         threads.append((draw_images, (facemesh_queue(RequestQueueLast), drawn_queue)))
         threads.append((show_images, (drawn_queue(RequestQueueLast), 'Face')))
+
+    for thread in threads:
+        threading.Thread(target=thread[0], args=thread[1], kwargs=thread[2] if len(thread) > 2 else {}).start()
+    return images_queue
+
+
+def face_multi_realtime(video_input=0, output_file='ppg_face.npy', duration=10., show=False):
+    images_queue   = RequestQueue()
+    facemesh_queue = RequestQueue()
+    interpolated_queue = RequestQueue()
+    roi_forehead_queue = RequestQueue()
+    ppg_face_queue = RequestQueue()
+    ppg_forehead_queue = RequestQueue()
+
+    # We'll create a thread calling the first item with the second item as arguments and the third as keyword arguments.
+    threads = [
+        (add_images,  (video_input, images_queue, duration)),
+
+        (detect_mesh, (images_queue(RequestQueueLast), facemesh_queue, FaceMesh())),
+
+        (interpolate, (images_queue(RequestQueueNext), facemesh_queue(RequestQueueNext), interpolated_queue)),
+
+        (get_ppg_computing_rois, (interpolated_queue(RequestQueueNext), ppg_face_queue, face_RoI, None, [left_eye_RoI, right_eye_RoI, mouth_RoI, left_eyebrow_RoI, right_eyebrow_RoI])),
+
+        (compute_roi, (interpolated_queue(RequestQueueNext), roi_forehead_queue, forehead_PoI, forehead_comb)),
+        (get_ppg,     (roi_forehead_queue(RequestQueueNext), ppg_forehead_queue)),
+
+        (save_array,  (ppg_face_queue(RequestQueueNext), output_file)),
+    ]
+
+    if show:
+        drawn_queue = RequestQueue()
+        threads.append((draw_images, (interpolated_queue, drawn_queue)))
+        threads.append((show_images, (drawn_queue,        'Face')))
 
     for thread in threads:
         threading.Thread(target=thread[0], args=thread[1], kwargs=thread[2] if len(thread) > 2 else {}).start()

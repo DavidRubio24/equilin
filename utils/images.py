@@ -3,9 +3,9 @@ from __future__ import annotations
 import cv2
 import numpy as np
 from mediapipe.python.solutions.face_mesh import FaceMesh
+from mediapipe.python.solutions.hands import Hands
 
 import roi
-from utils.utils import get_results_from_detector
 
 
 class Click:
@@ -69,8 +69,14 @@ def skin_mask(image: np.ndarray, hsv=(-5, 0, 0), th1=20) -> np.ndarray:
     HSV = cv2.cvtColor(image, cv2.COLOR_BGR2HSV_FULL)
     h, s, v = cv2.split(HSV)
 
-    # Only pixels in this mask are considered skin.
-    mask1 = abs(h.astype(np.int8) - hsv[0]).astype(np.uint8) < th1
+    # Those pixels are the mouth and eyes, thus they are not considered skin.
+    landmarks = get_face_landmarks(image)
+    mask0 = np.logical_not(roi2mask(landmarks[list(roi.mouth_RoI)], image.shape[:2], bool))
+    mask0 &= np.logical_not(roi2mask(landmarks[list(roi.left_eye_RoI)], image.shape[:2], bool))
+    mask0 &= np.logical_not(roi2mask(landmarks[list(roi.right_eye_RoI)], image.shape[:2], bool))
+
+    # Only the pixels that are in the face are considered skin.
+    mask1 = roi2mask(landmarks[list(roi.face_RoI)], image.shape[:2], bool)
 
     # only the pixels with a high saturation are considered skin.
     mask2 = s > hsv[1] - th1
@@ -78,14 +84,10 @@ def skin_mask(image: np.ndarray, hsv=(-5, 0, 0), th1=20) -> np.ndarray:
     # only the pixels with a high value are considered skin.
     mask3 = v > hsv[2] - 2 * th1
 
-    # Those pixels are the mouth, thus they are not considered skin.
-    landmarks = get_face_landmarks(image)
-    mask4 = np.logical_not(roi2mask(landmarks[list(roi.mouth_RoI)], image.shape[:2], bool))
+    # Only pixels in this mask are considered skin.
+    mask4 = abs(h.astype(np.int8) - hsv[0]).astype(np.uint8) < th1
 
-    # Only the pixels that are in the face are considered skin.
-    mask5 = roi2mask(landmarks[list(roi.face_RoI)], image.shape[:2], bool)
-
-    return mask1 & mask2 & mask3 & mask4
+    return mask4 & mask2 & mask3 & mask0 & mask1
 
 
 def get_forhead_color(image: np.ndarray, face_detector) -> np.ndarray:
@@ -100,6 +102,12 @@ def get_forhead_color(image: np.ndarray, face_detector) -> np.ndarray:
     hsv = cv2.cvtColor(forehead, cv2.COLOR_BGR2HSV_FULL)
     hsv_mean = np.mean(hsv, axis=(0, 1))
     return hsv_mean
+
+
+def get_results_from_detector(detector: FaceMesh | Hands, image) -> list:
+    """Unified way of getting results from different types of detectors."""
+    processed = detector.process(image)
+    return [processed.__dict__[field] for field in processed._fields]
 
 
 def get_face_landmarks(image):
