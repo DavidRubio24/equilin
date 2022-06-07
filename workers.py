@@ -7,7 +7,7 @@ import time
 import cv2
 import numpy as np
 
-from functions import Camera, draw, detect, roi, ppg
+from functions import Camera, draw, detect, roi, ppg, ppg_arround
 from roi import forehead_PoI, forehead_comb
 from utils.queues import RequestQueue
 from utils.images import isimage, islandmarks
@@ -76,6 +76,13 @@ def compute_roi(mesh_queue: RequestQueue, roi_queue: RequestQueue, roi_points, r
     log.debug('End of compute_roi.')
 
 
+def ppg_arround_landmarks(mesh_queue: RequestQueue, ppg_queue: RequestQueue):
+    for timestamp, image, landmarks, *rest in mesh_queue:
+        ppg_queue.append((timestamp, ppg_arround(image, landmarks), *rest))
+    ppg_queue.off()
+    log.debug('End of ppg_arround_landmarks.')
+
+
 def get_ppg_(roi_queue: RequestQueue, ppg_queue: RequestQueue):
     for timestamp, image, contour, *rest in roi_queue:
         # Get mask from contour.
@@ -104,7 +111,7 @@ def get_ppg_computing_rois(mesh_queue: RequestQueue, roi_queue: RequestQueue, ro
     log.debug('End of compute_roi.')
 
 
-def save_array(ppg_queue: RequestQueue, output_file='ppg.npy'):
+def save_array(ppg_queue: RequestQueue, output_file='ppg'):
     values = []
     for timestamp, ppg, *rest in ppg_queue:
         values.append(ppg)

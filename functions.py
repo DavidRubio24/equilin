@@ -64,7 +64,7 @@ def detect(detector, image: np.ndarray, timestamp=None):
 def roi(landmarks: np.ndarray, points=forehead_PoI, comb=None):
     comb = np.eye(len(points)) if comb is None else comb
     contour = landmarks.reshape(-1, 3)[list(points)]
-    contour = np.einsum('ij,ik->kj', contour, comb)
+    contour = np.einsum('ij,ik->kj', contour, np.array(comb).T)
     return contour
 
 
@@ -83,3 +83,26 @@ def ppg(image, contour, excludes=None):
         j = image.copy()
         j[np.logical_not(mask.astype(bool))] = 0
     return mean
+
+
+def ppg_arround(image, landmarks):
+    # TODO: test
+    def gaussian(h, w, sigma=10):
+        # TODO: comput as separate 1D filters.
+        kernel = np.zeros((h, w))
+        for i in range(h):
+            for j in range(w):
+                kernel[i, j] = np.exp(-((i - h // 2) ** 2 + (j - w // 2) ** 2) / (2 * sigma ** 2))
+        return kernel
+
+    h = w = 40
+    kernel = gaussian(h, w, sigma=10)
+    values = []
+
+    for x, y in landmarks[..., :2]:
+        for channel in np.split(image, image.shape[-1], axis=-1):
+            value = kernel * channel[y - h // 2:y + h // 2,
+                                     x - w // 2:x + w // 2].squeeze()
+            values.append(value)
+    return np.array(values).flatten()
+
