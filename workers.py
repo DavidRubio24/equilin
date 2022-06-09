@@ -2,17 +2,15 @@ from __future__ import annotations
 
 import logging
 import sys
-import time
 
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 
 from functions import Camera, draw, detect, roi, ppg, ppg_arround
 from roi import forehead_PoI, forehead_comb
 from utils.queues import RequestQueue
 from utils.images import isimage, islandmarks
-from utils.utils import get_image, get_landmarks
-from utils.images import get_results_from_detector
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.StreamHandler(sys.stderr))
@@ -219,3 +217,11 @@ def interpolate(images_queue: RequestQueue, mesh_queue: RequestQueue, interpolat
     interpolated_queue.off()
 
     log.debug('End of interpolate.')
+
+
+def plot_ppgs(ppg_queue: RequestQueue):
+    ppgs = []
+    for timestamp, ppg, *rest in ppg_queue:
+        ppgs.append(ppg)
+        plt.plot(ppgs)  # TODO: add color
+    log.debug('End of plot.')

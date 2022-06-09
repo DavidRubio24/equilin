@@ -5,8 +5,9 @@ import logging
 import cv2
 import numpy as np
 
-from roi import forehead_PoI, forehead_comb
+from roi import forehead_PoI
 from utils.images import get_results_from_detector
+from utils.utils import gaussian
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.StreamHandler(sys.stderr))
@@ -85,24 +86,18 @@ def ppg(image, contour, excludes=None):
     return mean
 
 
-def ppg_arround(image, landmarks):
-    # TODO: test
-    def gaussian(h, w, sigma=10):
-        # TODO: comput as separate 1D filters.
-        kernel = np.zeros((h, w))
-        for i in range(h):
-            for j in range(w):
-                kernel[i, j] = np.exp(-((i - h // 2) ** 2 + (j - w // 2) ** 2) / (2 * sigma ** 2))
-        return kernel
+KERNEL = gaussian(40, 40, 10)
 
-    h = w = 40
-    kernel = gaussian(h, w, sigma=10)
+
+def ppg_arround(image, landmarks):
     values = []
+    h, w = KERNEL.shape[:2]
 
     for x, y in landmarks[..., :2]:
+        x, y = round(x), round(y)
         for channel in np.split(image, image.shape[-1], axis=-1):
-            value = kernel * channel[y - h // 2:y + h // 2,
+            value = KERNEL * channel[y - h // 2:y + h // 2,
                                      x - w // 2:x + w // 2].squeeze()
-            values.append(value)
+            values.append(np.sum(value))
     return np.array(values).flatten()
 
