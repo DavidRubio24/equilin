@@ -39,11 +39,6 @@ class RequestQueue:
         with LockObject(self):
             self.followers.update(followers)
 
-    # TODO: get rid of this function.
-    def remove_follower(self, *followers):
-        with LockObject(self):
-            self.followers.difference_update(followers)
-
 
 class RequestQueueNext(RequestQueue):
     def __init__(self, *args, **kwargs):
@@ -64,7 +59,7 @@ class RequestQueueNext(RequestQueue):
             if not self.more:
                 # Tell the followers to stop.
                 self.off()
-                self.append = lambda x: None  # TODO: will this work?
+                self.append = lambda x: None
                 self.prev = []
                 raise StopIteration()  # End of iterator.
             time.sleep(0)

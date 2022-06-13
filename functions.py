@@ -1,35 +1,24 @@
-import sys
 import time
-import logging
 
 import cv2
 import numpy as np
 
-from roi import forehead_PoI
-from utils.images import get_results_from_detector
-from utils.utils import gaussian
-
-log = logging.getLogger(__name__)
-log.addHandler(logging.StreamHandler(sys.stderr))
-log.handlers[-1].setFormatter(logging.Formatter('\x1B[0;34m%(asctime)s - %(name)s.%(funcName)s\t- %(levelname)s - %(message)s\x1B[0m'))
-log.setLevel(logging.DEBUG)
+from utils.worker import KeepThemComing
 
 
-class Iterable:
-    def __iter__(self): return self
-
-
-class Camera(Iterable):
-    def __init__(self, video_input, duration):
+class ImageReader:
+    def __init__(self, video_input, duration=None):
         self.capture = cv2.VideoCapture(video_input)
-        self.time_duration = duration if isinstance(duration, float) else float('inf')
-        self.frames_duration = duration if isinstance(duration, int) else float('inf')
-        self.frame_count = 0
+        self.time_duration   = duration if isinstance(duration, float) else float('inf')
+        self.frames_duration = duration if isinstance(duration,   int) else float('inf')
         self.until = None
+        self.frame_count = 0
+
+    def __iter__(self): return self
 
     def __next__(self):
         success, image = self.capture.read()
-        timestamp = time.time()
+        timestamp = time.monotonic()
         self.until = self.until or timestamp + self.time_duration
         if self.frame_count >= self.frames_duration or timestamp > self.until:
             self.capture.release()
@@ -37,67 +26,147 @@ class Camera(Iterable):
         self.frame_count += 1
         return timestamp, image[..., ::-1]
 
-    def __del__(self): self.capture.release()
+
+def get_results_from_detector(detector, image) -> list:
+    """Unified way of getting results from different types of detectors (mainly FaceMesh and hands)."""
+    processed = detector.process(image)
+    return [processed.__dict__[field] for field in processed._fields]
 
 
-def draw(image: np.ndarray, points, color=(255, 255, 255), thickness=2, copy=True):
-    image = image.copy() if copy else image
-    points = np.vstack(list(points))
-    for x, y, *_ in points.astype(int).reshape(-1, 3):
-        cv2.circle(image, (x, y), thickness, color, -1)
-    return image
-
-
-def detect(detector, image: np.ndarray, timestamp=None):
+def landmarks(image, detector):
     if image is None:
-        log.debug(f'Image {timestamp} is None.')
-        return None
+        raise ValueError('Image {id} is None.')
+
     results = get_results_from_detector(detector, image)
+
     if results[0] is None:
-        log.debug(f'No detected {detector.__class__.__name__} mesh in {timestamp}.')
-        return None
-    landmarks = np.array([[(l.x, l.y, l.z) for l in result.landmark] for result in results[0]])[0]
-    landmarks[..., 0] *= image.shape[1]
-    landmarks[..., 1] *= image.shape[0]
+        raise ValueError(f'No detected {detector.__class__.__name__} in {{id}}.')
+
+    # MediPipe returns landmarks in an obscure format. Convert them to np.ndarray.
+    landmarks = np.array([(l.x, l.y, l.z) for l in results[0][0].landmark])
+    landmarks[..., :2] *= (image.shape[1], image.shape[0])  # From [0, 1] to image size.
+
     return landmarks
 
 
-def roi(landmarks: np.ndarray, points=forehead_PoI, comb=None):
-    comb = np.eye(len(points)) if comb is None else comb
-    contour = landmarks.reshape(-1, 3)[list(points)]
-    contour = np.einsum('ij,ik->kj', contour, np.array(comb).T)
+def contour(landmarks, points_indexes, combination=None):
+    """
+    Return contour of the ROI based on the landmarks.
+
+    :param landmarks: landmarks of the face or hand.
+    :param points_indexes: indexes of the points to use.
+    :param combination: combination of the points to use. If None, use all points.
+                        If it's a matrix, use the linear combination given by it.
+    """
+    contour = landmarks[list(points_indexes)]
+    if combination is not None:
+        contour = np.einsum('mn,nk->mk', np.array(combination), contour)
     return contour
 
 
-def ppg(image, contour, excludes=None):
+def ppg(image, contour, excludes=()):
     # Get mask from contour.
     mask = np.zeros(image.shape[:2], dtype=np.uint8)
-    cv2.drawContours(mask, [contour[..., :2].astype(int)], 0, 255, -1)
+    cv2.drawContours(mask, [np.round(contour[..., :2]).astype(int)], 0, 255, -1)
 
-    # Remove things like the eyes and mouth.
-    for exclude in excludes or []:
-        cv2.drawContours(mask, [exclude[..., :2].astype(int)], 0, 0, -1)
+    # Remove excluded contours.
+    for exclude in excludes:
+        cv2.drawContours(mask, [np.round(exclude[..., :2]).astype(int)], 0, 0, -1)
+
+    # TODO: Remove pixels that are obviusly not skin.
 
     # Get mean of the mask.
     mean = np.mean(image[mask.astype(bool)], axis=0)
-    if excludes:
-        j = image.copy()
-        j[np.logical_not(mask.astype(bool))] = 0
     return mean
 
 
-KERNEL = gaussian(40, 40, 10)
+def draw(image, landmarks, color=(255, 255, 255), radius=2, copy=True):
+    image = image.copy() if copy else image
+    for x, y in np.round(landmarks[..., :2]).astype(int):
+        cv2.circle(image, (x, y), radius, color, cv2.FILLED)
+    return image
 
 
-def ppg_arround(image, landmarks):
+def gaussian(h, w, sigma=10) -> np.ndarray:
+    # TODO: compute as separate 1D filters.
+    kernel = np.zeros((h, w))
+    for i in range(h):
+        for j in range(w):
+            kernel[i, j] = np.exp(-((i - h // 2) ** 2 + (j - w // 2) ** 2) / (2 * sigma ** 2))
+    return kernel / np.sum(kernel)
+
+
+KERNEL = gaussian(40, 40, 15)
+
+
+def ppg_around(image, landmarks, kernel=KERNEL):
     values = []
-    h, w = KERNEL.shape[:2]
+    kernel_ = kernel
+    h, w = kernel.shape[:2]
+    h2, w2 = h // 2, w // 2
 
-    for x, y in landmarks[..., :2]:
-        x, y = round(x), round(y)
+    for x, y in np.round(landmarks[..., :2]).astype(int):
+        x0, y0, x1, y1 = x - h2, y - w2, x + h2, y + w2
+        kernel = kernel_
+
+        # Make sure the kernel is inside the image.
+        if y0 < 0: kernel = kernel[-y0:, :]
+        if x0 < 0: kernel = kernel[:, -x0:]
+        if y1 > image.shape[0]: kernel = kernel[:image.shape[0] - y1, :]
+        if x1 > image.shape[1]: kernel = kernel[:, :image.shape[1] - x1]
+
         for channel in np.split(image, image.shape[-1], axis=-1):
-            value = KERNEL * channel[y - h // 2:y + h // 2,
-                                     x - w // 2:x + w // 2].squeeze()
+            value = kernel * channel[y0:y1, x0:x1].squeeze()
             values.append(np.sum(value))
     return np.array(values).flatten()
 
+
+class Save:
+    def __init__(self, path):
+        self.path = path
+        self.values = []
+
+    def __call__(self, ppg):
+        self.values.append(ppg)
+
+    def __del__(self):
+        np.save(self.path, self.values)
+
+
+class Interpolate:
+    def __init__(self):
+        self.last_landmarks = None
+        self.last_id = None
+        self.ids = []
+
+    def __call__(self, id, landmarks=None):
+        # We'll have to interpolate this one.
+        if landmarks is None:
+            self.ids.append(id)
+            raise KeepThemComing(True)
+        # We have new landmarks, but there are no ids to intepolate.
+        elif not self.ids:
+            self.last_landmarks = landmarks
+            self.last_id = id
+            return landmarks
+        # We have new landmarks and previous ids to intepolate.
+        else:
+            span = id - self.last_id
+            interpolateds = []
+            for id_ in self.ids:
+                alpha = (id_ - self.last_id) / span
+                interpolated = self.last_landmarks * alpha + landmarks * (1 - alpha)
+                interpolateds.append(interpolated)
+            self.last_landmarks = landmarks
+            self.last_id = id
+            self.ids.clear()
+            return interpolateds
+
+
+def show(image, title='Image'):
+    cv2.imshow(title, image[:, ::-1, ::-1])
+    cv2.waitKey(1)
+
+
+def print_ppg(ppg):
+    print(ppg)
