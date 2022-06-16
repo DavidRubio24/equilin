@@ -123,7 +123,7 @@ class Worker:
                     self.queue_out.append(self.previous_elements.pop(0) | resultsDict)
                 self.previous_elements = []
             else:
-                if isinstance(results, tuple) and len(results) != len(self.names) or len(self.names) != 1:
+                if isinstance(results, tuple) and len(results) != len(self.names) or not isinstance(results, tuple) and len(self.names) != 1:
                     raise ValueError(f"Function {self.function.__name__} must return "
                                      f"{len(self.names)} elements, not {len(results)}.")
                 resultsDict = dict(zip(self.names, results if isinstance(results, tuple) else (results,)))

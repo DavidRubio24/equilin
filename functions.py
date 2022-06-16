@@ -84,7 +84,7 @@ def roi(image, landmarks, contour, excludes=(), blur=(5, 5)):
 
 
 def ppg(image, roi):
-    mean = np.average(image, weights=np.repeat(roi, repeats=image.shape[-1], axis=-1), axis=0)
+    mean = np.average(image, weights=np.repeat(roi[..., np.newaxis], repeats=image.shape[-1], axis=-1), axis=(0, 1))
     return mean
 
 
