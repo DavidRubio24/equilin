@@ -64,19 +64,27 @@ def contour(landmarks, points_indexes, combination=None):
     return contour
 
 
-def ppg(image, contour, excludes=()):
+def roi(image, landmarks, contour, excludes=(), blur=(5, 5)):
     # Get mask from contour.
     mask = np.zeros(image.shape[:2], dtype=np.uint8)
-    cv2.drawContours(mask, [np.round(contour[..., :2]).astype(int)], 0, 255, -1)
+    contour = landmarks[list(contour)][..., :2]
+    cv2.drawContours(mask, [np.round(contour).astype(int)], 0, 255, -1)
 
     # Remove excluded contours.
     for exclude in excludes:
-        cv2.drawContours(mask, [np.round(exclude[..., :2]).astype(int)], 0, 0, -1)
+        exclude = landmarks[list(exclude)][..., :2]
+        cv2.drawContours(mask, [np.round(exclude).astype(int)], 0, 0, -1)
 
     # TODO: Remove pixels that are obviusly not skin.
 
-    # Get mean of the mask.
-    mean = np.mean(image[mask.astype(bool)], axis=0)
+    # Blur the mask.
+    mask = cv2.GaussianBlur(mask, blur, 0)
+
+    return mask
+
+
+def ppg(image, roi):
+    mean = np.average(image, weights=np.repeat(roi, repeats=image.shape[-1], axis=-1), axis=0)
     return mean
 
 
@@ -163,10 +171,21 @@ class Interpolate:
             return interpolateds
 
 
-def show(image, title='Image'):
-    cv2.imshow(title, image[:, ::-1, ::-1])
-    cv2.waitKey(1)
+def show(image, title='Image', delay=1):
+    if len(image.shape) == 2:
+        image = np.repeat(image[:, :, np.newaxis], 3, axis=2)
+    cv2.imshow(title, image[..., ::-1, ::-1])
+    cv2.waitKey(delay)
 
 
 def print_ppg(ppg):
     print(ppg)
+
+
+class SaveVideo:
+    def __init__(self, path, shape=(480, 640), fps=30):
+        self.writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*'HFYU'), fps, shape[:2][::-1])
+
+    def __call__(self, image): self.writer.write(image[..., ::-1])
+
+    def __del__(self): self.writer.release()

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sys
 import logging
 import inspect
@@ -16,6 +18,8 @@ def get_arguments(function, kwargs, substitute: dict = None):
     if substitute is not None:
         kwargs = kwargs.copy()
         for key, value in substitute.items():
+            if key not in kwargs:
+                continue
             kwargs[value] = kwargs[key]
             del kwargs[key]
     args = inspect.getfullargspec(function).args
@@ -112,11 +116,17 @@ class Worker:
                     raise ValueError(f"Function {self.function.__name__} must return a list of results after skipping"
                                      f"mutiple elements, not {type(results)}.")
                 for result in results:
-                    resultsDict = dict(zip(self.names, result if isinstance(result, tuple) else (result,), strict=True))
+                    if isinstance(result, tuple) and len(result) != len(self.names) or len(self.names) != 1:
+                        raise ValueError(f"Function {self.function.__name__} must return "
+                                         f"{len(self.names)} elements, not {len(result)}.")
+                    resultsDict = dict(zip(self.names, result if isinstance(result, tuple) else (result,)))
                     self.queue_out.append(self.previous_elements.pop(0) | resultsDict)
                 self.previous_elements = []
             else:
-                resultsDict = dict(zip(self.names, results if isinstance(results, tuple) else (results,), strict=True))
+                if isinstance(results, tuple) and len(results) != len(self.names) or len(self.names) != 1:
+                    raise ValueError(f"Function {self.function.__name__} must return "
+                                     f"{len(self.names)} elements, not {len(results)}.")
+                resultsDict = dict(zip(self.names, results if isinstance(results, tuple) else (results,)))
                 self.queue_out.append(element | resultsDict)
 
         if self.queue_out is not None:
