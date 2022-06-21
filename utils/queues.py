@@ -17,27 +17,27 @@ log.setLevel(logging.DEBUG)
 class RequestQueue:
     def __init__(self, followed: RequestQueue = None):
         self.more = True
-        self.followers: set[RequestQueue] = set()
+        self.observers: set[RequestQueue] = set()
         if followed is not None:
-            followed.add_follower(self)
+            followed.add_observer(self)
             self.more = followed.more
 
     def append(self, item):
-        for observer in list(self.followers):
+        for observer in list(self.observers):
             observer.append(item)
 
     def off(self):
         self.more = False
-        for observer in list(self.followers):
+        for observer in list(self.observers):
             observer.more = False
 
     def __iter__(self): return RequestQueueNext(self)
 
     def __call__(self, type_: type): return type_(self)
 
-    def add_follower(self, *followers):
+    def add_observer(self, *followers):
         with LockObject(self):
-            self.followers.update(followers)
+            self.observers.update(followers)
 
 
 class RequestQueueNext(RequestQueue):

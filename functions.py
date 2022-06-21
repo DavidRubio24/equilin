@@ -1,9 +1,17 @@
+import logging
+import sys
 import time
 
 import cv2
 import numpy as np
 
 from utils.worker import KeepThemComing
+
+
+log = logging.getLogger(__name__)
+log.addHandler(logging.StreamHandler(sys.stderr))
+log.handlers[-1].setFormatter(logging.Formatter('\x1B[0;34m%(asctime)s - %(name)s.%(funcName)s\t- %(levelname)s - %(message)s\x1B[0m'))
+log.setLevel(logging.DEBUG)
 
 
 class ImageReader:
@@ -13,6 +21,7 @@ class ImageReader:
         self.frames_duration = duration if isinstance(duration,   int) else float('inf')
         self.until = None
         self.frame_count = 0
+        self.__dict__['names'] = ('id', 'image')
 
     def __iter__(self): return self
 
@@ -26,9 +35,11 @@ class ImageReader:
         self.frame_count += 1
         return timestamp, image[..., ::-1]
 
+    __call__ = __next__
+
 
 def get_results_from_detector(detector, image) -> list:
-    """Unified way of getting results from different types of detectors (mainly FaceMesh and hands)."""
+    """Unified way of getting results from different types of detectors (mainly FaceMesh and Hands)."""
     processed = detector.process(image)
     return [processed.__dict__[field] for field in processed._fields]
 
@@ -88,13 +99,6 @@ def ppg(image, roi):
     return mean
 
 
-def draw(image, landmarks, color=(255, 255, 255), radius=2, copy=True):
-    image = image.copy() if copy else image
-    for x, y in np.round(landmarks[..., :2]).astype(int):
-        cv2.circle(image, (x, y), radius, color, cv2.FILLED)
-    return image
-
-
 def gaussian(h, w, sigma=10) -> np.ndarray:
     # TODO: compute as separate 1D filters.
     kernel = np.zeros((h, w))
@@ -129,6 +133,45 @@ def ppg_around(image, landmarks, kernel=KERNEL):
     return np.array(values).flatten()
 
 
+def draw(image, landmarks, color=(255, 255, 255), radius=2, copy=True):
+    image = image.copy() if copy else image
+    for x, y in np.round(landmarks[..., :2]).astype(int):
+        cv2.circle(image, (x, y), radius, color, cv2.FILLED)
+    return image
+
+
+def draw_contour(image, contour, color=(255, 255, 255), thickness=2, copy=True):
+    image = image.copy() if copy else image
+    cv2.drawContours(image, [np.round(contour[:, :2]).astype(int)], 0, color, thickness)
+    return image
+
+
+KERNEL = gaussian(40, 40, 2)
+KERNEL /= KERNEL.max()
+KERNEL = np.repeat(KERNEL[..., np.newaxis], repeats=3, axis=-1)
+
+
+def draw_kernel(image, landmarks, color=(255, 255, 255), radius=2, copy=True, kernel=KERNEL):
+    image = image.copy() if copy else image
+    kernel_ = kernel
+    h, w = kernel.shape[:2]
+    h2, w2 = h // 2, w // 2
+
+    for x, y in np.round(landmarks[..., :2]).astype(int):
+        x0, y0, x1, y1 = x - h2, y - w2, x + h2, y + w2
+        kernel = kernel_
+
+        # Make sure the kernel is inside the image.
+        if y0 < 0: kernel = kernel[-y0:, :]
+        if x0 < 0: kernel = kernel[:, -x0:]
+        if y1 > image.shape[0]: kernel = kernel[:image.shape[0] - y1, :]
+        if x1 > image.shape[1]: kernel = kernel[:, :image.shape[1] - x1]
+
+        image[y0:y1, x0:x1] = 255 - (255 - image[y0:y1, x0:x1]) * (1 - kernel)
+
+    return image
+
+
 class Save:
     def __init__(self, path):
         self.path = path
@@ -141,6 +184,11 @@ class Save:
         np.save(self.path, self.values)
 
 
+class SaveCSV(Save):
+    def __del__(self):
+        np.savetxt(self.path, self.values, delimiter=',')
+
+
 class Interpolate:
     def __init__(self):
         self.last_landmarks = None
@@ -148,18 +196,20 @@ class Interpolate:
         self.ids = []
 
     def __call__(self, id, landmarks=None):
-        # We'll have to interpolate this one.
+        # We'll have to interpolate this one later.
         if landmarks is None:
             self.ids.append(id)
             raise KeepThemComing(True)
         # We have new landmarks, but there are no ids to intepolate.
         elif not self.ids:
+            # Save them as the most up-to-date ones.
             self.last_landmarks = landmarks
             self.last_id = id
             return landmarks
         # We have new landmarks and previous ids to intepolate.
         else:
             span = id - self.last_id
+            # For each stored id, interpolate the landmarks.
             interpolateds = []
             for id_ in self.ids:
                 alpha = (id_ - self.last_id) / span
@@ -178,13 +228,21 @@ def show(image, title='Image', delay=1):
     cv2.waitKey(delay)
 
 
+def show_roi(image, roi, title='Image', delay=1):
+    if len(image.shape) == 2:
+        image = np.repeat(image[:, :, np.newaxis], 3, axis=2)
+    image[np.logical_not(roi.astype(bool))] = [0, 0, 0]
+    cv2.imshow(title, image[..., ::-1, ::-1])
+    cv2.waitKey(delay)
+
+
 def print_ppg(ppg):
     print(ppg)
 
 
 class SaveVideo:
-    def __init__(self, path, shape=(480, 640), fps=30):
-        self.writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*'HFYU'), fps, shape[:2][::-1])
+    def __init__(self, path, shape=(480, 640), fps=30, fourcc='HFYU'):
+        self.writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*fourcc), fps, shape[:2][::-1])
 
     def __call__(self, image): self.writer.write(image[..., ::-1])
 
