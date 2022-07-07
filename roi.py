@@ -3,7 +3,7 @@ from typing import Any
 import numpy as np
 
 # We'll use a linear combination (matrix multiplication) of some Points of Intrest of the mesh to determine the RoI.
-# Here we define those Points of Intrest and the matrix to combine them.
+# Here we define those Points of Intrest and the matrix to combine them (if any).
 
 forehead_PoI = (103,  67, 109,  10, 338, 297, 332,
                 333, 299, 337, 151, 108,  69, 104)
@@ -64,4 +64,8 @@ chin = (418, 194, 176, 400)
 
 left_down_check = (436, 433, 364, 394, 431)
 right_down_check = (216, 213, 135, 169, 211)
+
+forehead_right = (10, 338, 297, 332, 333, 334, 296, 336, 9, 151)
+
+forehead_left = (10, 151, 9, 107, 66, 105, 104, 103, 67, 109)
 
