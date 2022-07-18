@@ -5,7 +5,7 @@ import time
 
 import cv2
 import numpy as np
-from scipy import fftpack
+from scipy import fftpack, signal
 
 from utils.worker import KeepThemComing
 
@@ -90,7 +90,7 @@ def landmarks(image, detector):
     if results[0] is None:
         raise ValueError(f'No detected {detector.__class__.__name__} in {{id}}.')
 
-    # MediPipe returns landmarks in an obscure format. Convert them to np.ndarray.
+    # MediaPipe returns landmarks in an obscure format. Convert them to np.ndarray.
     landmarks = np.array([(l.x, l.y, l.z) for l in results[0][0].landmark])
     landmarks[..., :2] *= (image.shape[1], image.shape[0])  # From [0, 1] to image size.
 
@@ -322,15 +322,16 @@ class SaveVideo:
     def __del__(self): self.writer.release()
 
 
-def get_pulse(ppg: np.ndarray, lowest_pulse=50, highest_pulse=150, fpm=1800, best_of=6) -> float:
+def get_pulse(ppg: np.ndarray, lowest_pulse=50, highest_pulse=150, fps=None, secs=80, best_of=6) -> float:
     """
     Get the pulse from the PPG.
 
     :param ppg: The PPG signal. It would be better if its length is a power of 2.
     :param lowest_pulse: The lowest pulse that we'll accept, mesured in beats per minute.
     :param highest_pulse: The highest pulse that we'll accept, mesured in beats per minute.
-    :param fpm: The frequency of the PPG, in frames per minute.
-    :param best_of: The number of best pulses to take.
+    :param fps: The frequency of the PPG, in frames per seconds. By default (None), it's calculated from the seconds.
+    :param secs: The number of seconds that last this PPG signal. It's ignored if fpm is not None.
+    :param best_of: The number of best frequencies to average.
 
     :return: The pulse, in beats per minute.
     """
@@ -346,24 +347,27 @@ def get_pulse(ppg: np.ndarray, lowest_pulse=50, highest_pulse=150, fpm=1800, bes
                                                        a sinus  is angle -pi/2 (negative imaginary).
     """
 
+    # Compute the frames per minute from the frames per second or the seconds.
+    fpm = 60 * (fps or round(len(ppg) / secs))
+
     # Get the frequency of the lowest and highest pulse we'll admit.
     # If there are lowest_pulse beats per minute and fpm samples per minute,
     # then there's a pulse every fpm / lowest_pulse samples.
     lowest_pulse_freq  = len(ppg) * lowest_pulse  // fpm
     highest_pulse_freq = len(ppg) * highest_pulse // fpm
 
-    # We are only interested in certain range of frequencies.
-    frequencies_of_interest = fft[lowest_pulse_freq:highest_pulse_freq]
+    # We are only interested in the amplitude of certain range of frequencies.
+    freqs_of_interest = abs(fft[lowest_pulse_freq:highest_pulse_freq])
     # Take the indexes of the bigest ones.
-    biggest_frequencies = np.argpartition(-abs(frequencies_of_interest), best_of - 1)[:best_of]
+    biggest_frequencies = np.argpartition(-freqs_of_interest, min(best_of, len(freqs_of_interest)) - 1)[:best_of]
     log.debug((biggest_frequencies + lowest_pulse_freq) * fpm / len(ppg))
 
     # Those indexes are the frequencies of the best pulses. Take the weighted mean.
     # To weight them, take into account their amplitude.
-    amplitude = abs(frequencies_of_interest[biggest_frequencies])
+    amplitude = freqs_of_interest[biggest_frequencies]
     # Also, take into account the distance from their average.
     distances_to_avg = abs(biggest_frequencies - np.average(biggest_frequencies, weights=amplitude)) + .1
-    pulse = np.average(biggest_frequencies, weights=abs(amplitude) ** 2 / distances_to_avg)
+    pulse = np.average(biggest_frequencies, weights=amplitude ** 2 / distances_to_avg)
     # But the indexes are frequencies relative to the whole fft, not respect the range we are interested in.
     pulse += lowest_pulse_freq
     # Convert the frequency to beats per minute.
@@ -401,26 +405,27 @@ def amplify_frequencies(fft, amplify, lowest_pulse=50, highest_pulse=150, fpm=18
     return fft
 
 
-def isolate_frequencies(fft, lowest_pulse=50, highest_pulse=150, fpm=1800, copy=False):
+def isolate_frequencies(fft, lowest_pulse=50, highest_pulse=150, fps=None, secs=80, copy=False):
     """
     Isolate the frequencies of the PPG.
 
     :param fft: The Fourier Transform of the PPG.
     :param lowest_pulse: The lowest pulse that we'll accept, mesured in beats per minute.
     :param highest_pulse: The highest pulse that we'll accept, mesured in beats per minute.
-    :param fpm: The frequency of the PPG, in frames per minute.
+    :param fps: The frequency of the PPG, in frames per second.
+    :param secs: The number of seconds that last this PPG signal. It's ignored if fpm is not None.
     :param copy: Whether to copy the fft or not.
 
     :return: The Fourier Transform of the PPG.
     """
     fft = fft.copy() if copy else fft
+    fps = fps or round(len(fft) / secs)
 
-    # Get the frequency of the lowest pulse.
-    # There are lowest_pulse beats per minute and fpm samples per minute,
+    # Get the frequency of the lowest and highest pulse.
+    # If there are lowest_pulse beats per minute and fpm samples per minute,
     # i.e. a pulse every fpm / lowest_pulse samples.
-    lowest_pulse_freq  = len(fft) * lowest_pulse  // fpm
-    # Get the frequency of the highest pulse.
-    highest_pulse_freq = len(fft) * highest_pulse // fpm
+    lowest_pulse_freq  = len(fft) * lowest_pulse // (60 * fps)
+    highest_pulse_freq = len(fft) * highest_pulse // (60 * fps)
 
     # Zero the frequencies we're not interested in.
     fft[:lowest_pulse_freq] = 0
@@ -429,3 +434,38 @@ def isolate_frequencies(fft, lowest_pulse=50, highest_pulse=150, fpm=1800, copy=
 
     return fft
 
+
+def get_peaks(ppg, lowest_pulse=50, highest_pulse=150, fps=None, secs=80):
+    """
+    Get the peaks of the PPG.
+
+    :param ppg: The PPG signal.
+    :param lowest_pulse: The lowest pulse that we'll accept, mesured in beats per minute.
+    :param highest_pulse: The highest pulse that we'll accept, mesured in beats per minute.
+    :param fps: The frequency of the PPG, in frames per second.
+    :param secs: The number of seconds that last this PPG signal. It's ignored if fpm is not None.
+
+    :return: The peaks of the PPG.
+    """
+    # Get the Fourier Transform of the PPG.
+    fft = fftpack.fft(ppg, axis=0)
+
+    fps = fps or round(len(ppg) / secs)
+
+    # Get the frequency of the lowest and highest pulse.
+    # If there are lowest_pulse beats per minute and fpm samples per minute,
+    # i.e. a pulse every fpm / lowest_pulse samples.
+    lowest_pulse_freq  = len(ppg) * lowest_pulse  // (60 * fps)
+    highest_pulse_freq = len(ppg) * highest_pulse // (60 * fps)
+
+    # Zero the frequencies we're not interested in.
+    fft[:lowest_pulse_freq] = 0
+    fft[len(fft) - lowest_pulse_freq + 1:] = 0
+    fft[highest_pulse_freq: len(fft) - highest_pulse_freq + 1] = 0
+
+    ifft = fftpack.ifft(fft, axis=0)
+
+    # Get the peaks of the PPG.
+    peaks, _ = signal.find_peaks(ifft.real)
+
+    return peaks
